@@ -1,0 +1,2 @@
+# Place migration scripts here for schema changes
+# e.g. 001_add_phone_to_users.js

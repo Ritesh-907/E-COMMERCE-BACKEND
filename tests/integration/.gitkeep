@@ -1,0 +1,2 @@
+# Integration tests — test routes end-to-end using supertest + test DB
+# Example: tests/integration/auth.test.js → test register/login flow

@@ -1,0 +1,2 @@
+# Mock files for external services (Stripe, Cloudinary, email)
+# Example: tests/mocks/stripe.mock.js, tests/mocks/email.mock.js

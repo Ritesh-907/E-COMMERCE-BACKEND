@@ -1,0 +1,3 @@
+# Unit tests — test individual functions in isolation (utils, services, models)
+# File naming: *.test.js or *.spec.js
+# Example: tests/unit/helpers.test.js, tests/unit/coupon.service.test.js

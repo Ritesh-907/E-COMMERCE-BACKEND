@@ -1,0 +1,1430 @@
+openapi: 3.0.0
+
+# =============================================================================
+# E-Commerce REST API — OpenAPI 3.0 Specification
+# =============================================================================
+# Import into Postman: Import → File → openapi.yaml
+# Preview online:      https://editor.swagger.io
+# Base URL (dev):      http://localhost:5000/api/v1
+# =============================================================================
+
+info:
+  title: E-Commerce REST API
+  version: 1.0.0
+  description: |
+    Full-featured e-commerce backend API.
+
+    ## Authentication
+    Endpoints marked 🔒 require a JWT Bearer token.
+    Obtain one via `POST /auth/login`, then set:
+    `Authorization: Bearer <accessToken>`
+
+    ## Token Lifecycle
+    - **Access token** — expires in 15 minutes (in response body)
+    - **Refresh token** — expires in 7 days (in `httpOnly` cookie)
+    - Refresh via `POST /auth/refresh-token` (cookie sent automatically)
+
+    ## Rate Limits
+    - General: **100 req / 15 min** per IP
+    - Auth: **10 req / 15 min** per IP
+    - Uploads: **20 req / hr** per IP
+
+servers:
+  - url: http://localhost:5000/api/v1
+    description: Local development
+  - url: https://api.example.com/api/v1
+    description: Production
+
+# =============================================================================
+# Security
+# =============================================================================
+security:
+  - bearerAuth: []
+
+# =============================================================================
+# Tags (sidebar groups)
+# =============================================================================
+tags:
+  - name: Health
+    description: Liveness and readiness probes
+  - name: Auth
+    description: Register, login, OAuth, password reset
+  - name: Users
+    description: Profile management and admin user CRUD
+  - name: Products
+    description: Catalog, search, and admin product management
+  - name: Categories
+    description: Category tree management
+  - name: Orders
+    description: Order lifecycle — create, track, cancel, admin
+  - name: Cart
+    description: Shopping cart — items, coupon, checkout
+  - name: Reviews
+    description: Product reviews, ratings, and likes
+  - name: Coupons
+    description: Discount code management and user validation
+  - name: Payments
+    description: Stripe payment intents, webhooks, refunds
+  - name: Wishlist
+    description: Save products and move to cart
+  - name: Analytics
+    description: Admin dashboard — revenue, users, top products
+
+# =============================================================================
+# Reusable Components
+# =============================================================================
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    pageParam:
+      in: query
+      name: page
+      schema: { type: integer, minimum: 1, default: 1 }
+    limitParam:
+      in: query
+      name: limit
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    sortParam:
+      in: query
+      name: sort
+      schema: { type: string, example: "-createdAt,price" }
+    searchParam:
+      in: query
+      name: search
+      schema: { type: string, example: "headphones" }
+    idParam:
+      in: path
+      name: id
+      required: true
+      schema: { type: string, example: "64abc1234567890def123456" }
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid access token
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { success: false, message: "Invalid access token." }
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ValidationError:
+      description: Request validation failed
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ValidationError" }
+    RateLimit:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    # ── Utility ──────────────────────────────────────────────────────────────
+    Error:
+      type: object
+      properties:
+        success: { type: boolean, example: false }
+        message: { type: string,  example: "Something went wrong." }
+
+    ValidationError:
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          properties:
+            errors:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:   { type: string, example: "email" }
+                  message: { type: string, example: "must be a valid email" }
+
+    SuccessResponse:
+      type: object
+      properties:
+        success: { type: boolean, example: true  }
+        message: { type: string,  example: "Success." }
+        data:    { type: object }
+
+    PaginatedResponse:
+      type: object
+      properties:
+        success:    { type: boolean, example: true }
+        message:    { type: string,  example: "Success." }
+        count:      { type: integer, example: 20 }
+        pagination:
+          type: object
+          properties:
+            total:       { type: integer, example: 150  }
+            page:        { type: integer, example: 1    }
+            limit:       { type: integer, example: 20   }
+            totalPages:  { type: integer, example: 8    }
+            hasNextPage: { type: boolean, example: true }
+            hasPrevPage: { type: boolean, example: false }
+        data: { type: array, items: {} }
+
+    ObjectId:
+      type: string
+      pattern: "^[0-9a-fA-F]{24}$"
+      example: "64abc1234567890def123456"
+
+    ImageObject:
+      type: object
+      properties:
+        url:       { type: string, format: uri }
+        public_id: { type: string }
+
+    # ── User ─────────────────────────────────────────────────────────────────
+    User:
+      type: object
+      properties:
+        _id:        { $ref: "#/components/schemas/ObjectId" }
+        name:       { type: string,  example: "Jane Doe" }
+        email:      { type: string,  format: email }
+        role:       { type: string,  enum: [user, admin, seller] }
+        phone:      { type: string,  example: "+1 555 123 4567" }
+        avatar:     { $ref: "#/components/schemas/ImageObject" }
+        isVerified: { type: boolean, example: true  }
+        isActive:   { type: boolean, example: true  }
+        lastLogin:  { type: string,  format: date-time }
+        createdAt:  { type: string,  format: date-time }
+
+    Address:
+      type: object
+      required: [street, city, state, zip, country]
+      properties:
+        _id:       { $ref: "#/components/schemas/ObjectId" }
+        street:    { type: string, example: "123 Main St" }
+        city:      { type: string, example: "New York" }
+        state:     { type: string, example: "NY" }
+        zip:       { type: string, example: "10001" }
+        country:   { type: string, example: "US" }
+        phone:     { type: string, example: "+1 555 123 4567" }
+        label:     { type: string, enum: [Home, Office, Other] }
+        isDefault: { type: boolean, example: true }
+
+    # ── Auth ─────────────────────────────────────────────────────────────────
+    RegisterRequest:
+      type: object
+      required: [name, email, password, confirmPassword]
+      properties:
+        name:            { type: string,  example: "Jane Doe" }
+        email:           { type: string,  format: email, example: "jane@example.com" }
+        password:        { type: string,  format: password, minLength: 8 }
+        confirmPassword: { type: string,  format: password }
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:    { type: string, format: email }
+        password: { type: string, format: password }
+
+    AuthResponse:
+      type: object
+      properties:
+        success:     { type: boolean, example: true }
+        accessToken: { type: string,  example: "eyJhbGciOiJIUzI1NiIsIn..." }
+        data:
+          type: object
+          properties:
+            user: { $ref: "#/components/schemas/User" }
+
+    # ── Category ─────────────────────────────────────────────────────────────
+    Category:
+      type: object
+      properties:
+        _id:      { $ref: "#/components/schemas/ObjectId" }
+        name:     { type: string,  example: "Electronics" }
+        slug:     { type: string,  example: "electronics" }
+        parent:   { $ref: "#/components/schemas/ObjectId" }
+        image:    { $ref: "#/components/schemas/ImageObject" }
+        isActive: { type: boolean, example: true }
+        order:    { type: integer, example: 1 }
+
+    # ── Product ───────────────────────────────────────────────────────────────
+    Product:
+      type: object
+      properties:
+        _id:             { $ref: "#/components/schemas/ObjectId" }
+        name:            { type: string,  example: "Wireless Headphones" }
+        slug:            { type: string,  example: "wireless-headphones" }
+        description:     { type: string  }
+        shortDesc:       { type: string,  example: "Premium noise-cancelling headphones" }
+        price:           { type: number,  example: 99.99  }
+        comparePrice:    { type: number,  example: 129.99 }
+        category:        { $ref: "#/components/schemas/Category" }
+        images:          { type: array, items: { $ref: "#/components/schemas/ImageObject" } }
+        stock:           { type: integer, example: 42  }
+        sold:            { type: integer, example: 150 }
+        sku:             { type: string,  example: "WH-001" }
+        brand:           { type: string,  example: "SoundPro" }
+        ratings:
+          type: object
+          properties:
+            average: { type: number,  example: 4.5 }
+            count:   { type: integer, example: 234 }
+        tags:            { type: array, items: { type: string } }
+        isFeatured:      { type: boolean, example: true }
+        isPublished:     { type: boolean, example: true }
+        discountPercent: { type: integer, example: 23 }
+        inStock:         { type: boolean, example: true }
+        createdAt:       { type: string,  format: date-time }
+
+    CreateProductRequest:
+      type: object
+      required: [name, description, price, category, stock]
+      properties:
+        name:         { type: string,  minLength: 3,  maxLength: 200 }
+        description:  { type: string,  minLength: 20, maxLength: 5000 }
+        shortDesc:    { type: string,  maxLength: 200 }
+        price:        { type: number,  minimum: 0 }
+        comparePrice: { type: number,  minimum: 0 }
+        category:     { $ref: "#/components/schemas/ObjectId" }
+        stock:        { type: integer, minimum: 0 }
+        sku:          { type: string  }
+        brand:        { type: string  }
+        tags:         { type: array,  items: { type: string } }
+        isFeatured:   { type: boolean }
+        isPublished:  { type: boolean }
+
+    # ── Order ─────────────────────────────────────────────────────────────────
+    OrderItem:
+      type: object
+      properties:
+        product:  { $ref: "#/components/schemas/ObjectId" }
+        name:     { type: string }
+        image:    { type: string }
+        price:    { type: number  }
+        quantity: { type: integer }
+        subtotal: { type: number  }
+
+    Order:
+      type: object
+      properties:
+        _id:             { $ref: "#/components/schemas/ObjectId" }
+        orderNumber:     { type: string,  example: "ORD-1715000000000" }
+        user:            { $ref: "#/components/schemas/User" }
+        items:           { type: array, items: { $ref: "#/components/schemas/OrderItem" } }
+        shippingAddress: { $ref: "#/components/schemas/Address" }
+        paymentMethod:   { type: string, enum: [card, cod, wallet] }
+        paymentStatus:   { type: string, enum: [pending, paid, failed, refunded] }
+        orderStatus:     { type: string, enum: [pending, processing, shipped, delivered, cancelled] }
+        itemsPrice:      { type: number, example: 199.98 }
+        shippingPrice:   { type: number, example: 10.00  }
+        taxPrice:        { type: number, example: 20.00  }
+        discountAmount:  { type: number, example: 15.00  }
+        totalPrice:      { type: number, example: 214.98 }
+        isPaid:          { type: boolean }
+        paidAt:          { type: string, format: date-time }
+        isDelivered:     { type: boolean }
+        deliveredAt:     { type: string, format: date-time }
+        trackingNumber:  { type: string }
+        createdAt:       { type: string, format: date-time }
+
+    CreateOrderRequest:
+      type: object
+      required: [items, shippingAddress, paymentMethod]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [product, quantity]
+            properties:
+              product:  { $ref: "#/components/schemas/ObjectId" }
+              quantity: { type: integer, minimum: 1 }
+        shippingAddress: { $ref: "#/components/schemas/Address" }
+        paymentMethod:   { type: string, enum: [card, cod, wallet] }
+        couponCode:      { type: string, example: "SUMMER20" }
+        notes:           { type: string, maxLength: 500 }
+
+    # ── Cart ──────────────────────────────────────────────────────────────────
+    CartItem:
+      type: object
+      properties:
+        _id:      { $ref: "#/components/schemas/ObjectId" }
+        product:  { $ref: "#/components/schemas/Product" }
+        quantity: { type: integer, example: 2 }
+        price:    { type: number,  example: 99.99 }
+
+    Cart:
+      type: object
+      properties:
+        _id:         { $ref: "#/components/schemas/ObjectId" }
+        items:       { type: array, items: { $ref: "#/components/schemas/CartItem" } }
+        coupon:      { $ref: "#/components/schemas/ObjectId" }
+        totalItems:  { type: integer, example: 3 }
+        totalAmount: { type: number,  example: 299.97 }
+
+    # ── Review ────────────────────────────────────────────────────────────────
+    Review:
+      type: object
+      properties:
+        _id:        { $ref: "#/components/schemas/ObjectId" }
+        product:    { $ref: "#/components/schemas/ObjectId" }
+        user:       { $ref: "#/components/schemas/User" }
+        rating:     { type: integer, minimum: 1, maximum: 5 }
+        title:      { type: string  }
+        comment:    { type: string  }
+        images:     { type: array, items: { $ref: "#/components/schemas/ImageObject" } }
+        isVerified: { type: boolean }
+        likesCount: { type: integer }
+        createdAt:  { type: string, format: date-time }
+
+    # ── Coupon ────────────────────────────────────────────────────────────────
+    Coupon:
+      type: object
+      properties:
+        _id:           { $ref: "#/components/schemas/ObjectId" }
+        code:          { type: string, example: "SUMMER20" }
+        type:          { type: string, enum: [percentage, fixed] }
+        discount:      { type: number, example: 20 }
+        minOrderValue: { type: number, example: 50 }
+        maxDiscount:   { type: number, example: 100 }
+        usageLimit:    { type: integer }
+        usedCount:     { type: integer }
+        expiryDate:    { type: string, format: date-time }
+        isActive:      { type: boolean }
+
+# =============================================================================
+# Paths
+# =============================================================================
+paths:
+
+  # ── Health ──────────────────────────────────────────────────────────────────
+  /health:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      security: []
+      responses:
+        "200":
+          description: Server is healthy
+          content:
+            application/json:
+              example:
+                success: true
+                status: healthy
+                uptime: 3600
+                env: production
+
+  /health/deep:
+    get:
+      tags: [Health]
+      summary: Readiness probe (MongoDB + Redis)
+      security: []
+      responses:
+        "200":
+          description: All dependencies healthy
+        "503":
+          description: One or more dependencies unavailable
+
+  # ── Auth ────────────────────────────────────────────────────────────────────
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user account
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterRequest" }
+      responses:
+        "201":
+          description: Registration successful. Check email for verification link.
+          content:
+            application/json:
+              example:
+                success: true
+                message: "Registration successful. Please check your email to verify your account."
+        "400":
+          description: Email already registered
+          content:
+            application/json:
+              example: { success: false, message: "Email is already registered." }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "429": { $ref: "#/components/responses/RateLimit" }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login and receive access + refresh tokens
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthResponse" }
+          headers:
+            Set-Cookie:
+              description: httpOnly refresh token cookie
+              schema: { type: string }
+        "401":
+          description: Invalid credentials
+        "403":
+          description: Email not verified or account deactivated
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "429": { $ref: "#/components/responses/RateLimit" }
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: 🔒 Logout — revoke refresh token
+      responses:
+        "200":
+          description: Logged out successfully
+
+  /auth/refresh-token:
+    post:
+      tags: [Auth]
+      summary: Get a new access token using the refresh token cookie
+      security: []
+      responses:
+        "200":
+          description: New access token issued
+          content:
+            application/json:
+              example:
+                success: true
+                data: { accessToken: "eyJhbGci..." }
+        "401":
+          description: Refresh token missing, invalid, or expired
+
+  /auth/forgot-password:
+    post:
+      tags: [Auth]
+      summary: Request a password reset email
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "200":
+          description: Reset email sent if address is registered (always 200)
+
+  /auth/reset-password/{token}:
+    patch:
+      tags: [Auth]
+      summary: Reset password using email link token
+      security: []
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password, confirmPassword]
+              properties:
+                password:        { type: string, minLength: 8 }
+                confirmPassword: { type: string }
+      responses:
+        "200":
+          description: Password reset successful — new tokens issued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthResponse" }
+        "400":
+          description: Token invalid or expired
+
+  /auth/verify-email/{token}:
+    get:
+      tags: [Auth]
+      summary: Verify email address
+      security: []
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Email verified successfully
+        "400":
+          description: Token invalid or expired
+
+  /auth/google:
+    get:
+      tags: [Auth]
+      summary: Initiate Google OAuth2 sign-in
+      security: []
+      responses:
+        "302":
+          description: Redirect to Google consent screen
+
+  /auth/google/callback:
+    get:
+      tags: [Auth]
+      summary: Google OAuth2 callback — redirects to frontend with token
+      security: []
+      responses:
+        "302":
+          description: Redirect to CLIENT_URL/auth/success?token=...
+
+  # ── Users ───────────────────────────────────────────────────────────────────
+  /users/me:
+    get:
+      tags: [Users]
+      summary: 🔒 Get current user profile
+      responses:
+        "200":
+          description: Current user profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      user: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    patch:
+      tags: [Users]
+      summary: 🔒 Update current user profile (name, phone, avatar)
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                name:   { type: string }
+                phone:  { type: string }
+                avatar:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Profile updated
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /users/me/password:
+    patch:
+      tags: [Users]
+      summary: 🔒 Change current user password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword, confirmPassword]
+              properties:
+                currentPassword: { type: string }
+                newPassword:     { type: string, minLength: 8 }
+                confirmPassword: { type: string }
+      responses:
+        "200":
+          description: Password changed — new tokens issued
+        "401":
+          description: Current password incorrect
+
+  /users/me/addresses:
+    post:
+      tags: [Users]
+      summary: 🔒 Add a new delivery address
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Address" }
+      responses:
+        "200":
+          description: Address added
+
+  /users:
+    get:
+      tags: [Users]
+      summary: 🔒 Admin — list all users
+      parameters:
+        - { $ref: "#/components/parameters/pageParam" }
+        - { $ref: "#/components/parameters/limitParam" }
+        - { $ref: "#/components/parameters/searchParam" }
+      responses:
+        "200":
+          description: Paginated user list
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /users/{id}:
+    get:
+      tags: [Users]
+      summary: 🔒 Admin — get user by ID
+      parameters:
+        - { $ref: "#/components/parameters/idParam" }
+      responses:
+        "200":
+          description: User details
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Users]
+      summary: 🔒 Admin — update user role or status
+      parameters:
+        - { $ref: "#/components/parameters/idParam" }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role:     { type: string, enum: [user, admin, seller] }
+                isActive: { type: boolean }
+      responses:
+        "200":
+          description: User updated
+    delete:
+      tags: [Users]
+      summary: 🔒 Admin — permanently delete user
+      parameters:
+        - { $ref: "#/components/parameters/idParam" }
+      responses:
+        "200":
+          description: User deleted
+
+  # ── Products ─────────────────────────────────────────────────────────────────
+  /products:
+    get:
+      tags: [Products]
+      summary: Get all products (paginated, filterable, searchable)
+      security: []
+      parameters:
+        - { $ref: "#/components/parameters/pageParam" }
+        - { $ref: "#/components/parameters/limitParam" }
+        - { $ref: "#/components/parameters/sortParam" }
+        - { $ref: "#/components/parameters/searchParam" }
+        - in: query
+          name: "price[gte]"
+          schema: { type: number }
+          description: Minimum price filter
+        - in: query
+          name: "price[lte]"
+          schema: { type: number }
+          description: Maximum price filter
+        - in: query
+          name: category
+          schema: { type: string }
+      responses:
+        "200":
+          description: Paginated product list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaginatedResponse" }
+    post:
+      tags: [Products]
+      summary: 🔒 Admin/Seller — create a new product
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              allOf:
+                - { $ref: "#/components/schemas/CreateProductRequest" }
+                - type: object
+                  properties:
+                    images:
+                      type: array
+                      items: { type: string, format: binary }
+      responses:
+        "201":
+          description: Product created
+
+  /products/featured:
+    get:
+      tags: [Products]
+      summary: Get featured products
+      security: []
+      responses:
+        "200":
+          description: Featured products list
+
+  /products/{id}:
+    get:
+      tags: [Products]
+      summary: Get product by ID or slug
+      security: []
+      parameters:
+        - { $ref: "#/components/parameters/idParam" }
+      responses:
+        "200":
+          description: Product details + recent reviews
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Products]
+      summary: 🔒 Admin/Seller — update a product
+      parameters:
+        - { $ref: "#/components/parameters/idParam" }
+      responses:
+        "200":
+          description: Product updated
+    delete:
+      tags: [Products]
+      summary: 🔒 Admin — delete a product
+      parameters:
+        - { $ref: "#/components/parameters/idParam" }
+      responses:
+        "200":
+          description: Product deleted
+
+  /products/{id}/related:
+    get:
+      tags: [Products]
+      summary: Get related products (same category)
+      security: []
+      parameters:
+        - { $ref: "#/components/parameters/idParam" }
+      responses:
+        "200":
+          description: Related products
+
+  # ── Categories ───────────────────────────────────────────────────────────────
+  /categories:
+    get:
+      tags: [Categories]
+      summary: Get all categories (flat list or nested tree)
+      security: []
+      parameters:
+        - in: query
+          name: format
+          schema: { type: string, enum: [flat, tree] }
+      responses:
+        "200":
+          description: Category list or tree
+    post:
+      tags: [Categories]
+      summary: 🔒 Admin — create a category
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:   { type: string }
+                parent: { type: string }
+                order:  { type: integer }
+                image:  { type: string, format: binary }
+      responses:
+        "201":
+          description: Category created
+
+  /categories/{id}:
+    get:
+      tags: [Categories]
+      summary: Get category by ID or slug
+      security: []
+      parameters:
+        - { $ref: "#/components/parameters/idParam" }
+      responses:
+        "200":
+          description: Category + product count
+    patch:
+      tags: [Categories]
+      summary: 🔒 Admin — update a category
+      parameters:
+        - { $ref: "#/components/parameters/idParam" }
+      responses:
+        "200":
+          description: Category updated
+    delete:
+      tags: [Categories]
+      summary: 🔒 Admin — delete a category
+      parameters:
+        - { $ref: "#/components/parameters/idParam" }
+      responses:
+        "200":
+          description: Category deleted
+        "400":
+          description: Category has assigned products or sub-categories
+
+  # ── Orders ───────────────────────────────────────────────────────────────────
+  /orders:
+    post:
+      tags: [Orders]
+      summary: 🔒 Place a new order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateOrderRequest" }
+      responses:
+        "201":
+          description: Order placed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      order: { $ref: "#/components/schemas/Order" }
+        "400":
+          description: Items out of stock or invalid coupon
+
+  /orders/my-orders:
+    get:
+      tags: [Orders]
+      summary: 🔒 Get current user's orders
+      parameters:
+        - { $ref: "#/components/parameters/pageParam" }
+        - { $ref: "#/components/parameters/limitParam" }
+      responses:
+        "200":
+          description: Paginated order list
+
+  /orders/{id}:
+    get:
+      tags: [Orders]
+      summary: 🔒 Get order by ID
+      parameters:
+        - { $ref: "#/components/parameters/idParam" }
+      responses:
+        "200":
+          description: Order details
+        "403":
+          description: Not your order
+
+  /orders/{id}/cancel:
+    patch:
+      tags: [Orders]
+      summary: 🔒 Cancel an order
+      parameters:
+        - { $ref: "#/components/parameters/idParam" }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, maxLength: 500 }
+      responses:
+        "200":
+          description: Order cancelled
+        "400":
+          description: Order cannot be cancelled (already shipped/delivered)
+
+  /orders/admin/all:
+    get:
+      tags: [Orders]
+      summary: 🔒 Admin — list all orders
+      parameters:
+        - { $ref: "#/components/parameters/pageParam" }
+        - { $ref: "#/components/parameters/limitParam" }
+        - { $ref: "#/components/parameters/sortParam" }
+        - in: query
+          name: orderStatus
+          schema: { type: string, enum: [pending, processing, shipped, delivered, cancelled] }
+      responses:
+        "200":
+          description: Paginated order list with status summary
+
+  /orders/admin/{id}/status:
+    patch:
+      tags: [Orders]
+      summary: 🔒 Admin — update order status
+      parameters:
+        - { $ref: "#/components/parameters/idParam" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [processing, shipped, delivered, cancelled] }
+      responses:
+        "200":
+          description: Status updated
+        "400":
+          description: Invalid status transition
+
+  /orders/admin/{id}/tracking:
+    patch:
+      tags: [Orders]
+      summary: 🔒 Admin — add tracking number
+      parameters:
+        - { $ref: "#/components/parameters/idParam" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [trackingNumber]
+              properties:
+                trackingNumber: { type: string }
+                autoShip:       { type: boolean, default: true }
+      responses:
+        "200":
+          description: Tracking number added
+
+  # ── Cart ─────────────────────────────────────────────────────────────────────
+  /cart:
+    get:
+      tags: [Cart]
+      summary: 🔒 Get current user's cart
+      responses:
+        "200":
+          description: Cart with totals
+    delete:
+      tags: [Cart]
+      summary: 🔒 Clear cart
+      responses:
+        "200":
+          description: Cart cleared
+
+  /cart/items:
+    post:
+      tags: [Cart]
+      summary: 🔒 Add item to cart
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [productId]
+              properties:
+                productId: { type: string }
+                quantity:  { type: integer, minimum: 1, default: 1 }
+      responses:
+        "200":
+          description: Item added — returns updated cart
+
+  /cart/items/{itemId}:
+    patch:
+      tags: [Cart]
+      summary: 🔒 Update cart item quantity (0 = remove)
+      parameters:
+        - in: path
+          name: itemId
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quantity]
+              properties:
+                quantity: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: Cart updated
+    delete:
+      tags: [Cart]
+      summary: 🔒 Remove item from cart
+      parameters:
+        - in: path
+          name: itemId
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Item removed
+
+  /cart/coupon:
+    post:
+      tags: [Cart]
+      summary: 🔒 Apply a coupon to the cart
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string, example: "SUMMER20" }
+      responses:
+        "200":
+          description: Coupon applied — returns discount amount
+        "400":
+          description: Invalid, expired, or ineligible coupon
+    delete:
+      tags: [Cart]
+      summary: 🔒 Remove coupon from cart
+      responses:
+        "200":
+          description: Coupon removed
+
+  # ── Reviews ───────────────────────────────────────────────────────────────────
+  /products/{productId}/reviews:
+    get:
+      tags: [Reviews]
+      summary: Get reviews for a product
+      security: []
+      parameters:
+        - in: path
+          name: productId
+          required: true
+          schema: { type: string }
+        - { $ref: "#/components/parameters/pageParam" }
+        - in: query
+          name: sort
+          schema: { type: string, enum: [newest, highest, liked] }
+      responses:
+        "200":
+          description: Review list with rating distribution
+    post:
+      tags: [Reviews]
+      summary: 🔒 Submit a review (one per product per user)
+      parameters:
+        - in: path
+          name: productId
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [rating, comment]
+              properties:
+                rating:  { type: integer, minimum: 1, maximum: 5 }
+                title:   { type: string  }
+                comment: { type: string, minLength: 10 }
+                images:
+                  type: array
+                  items: { type: string, format: binary }
+      responses:
+        "201":
+          description: Review submitted
+        "400":
+          description: Already reviewed this product
+
+  /reviews/{id}:
+    patch:
+      tags: [Reviews]
+      summary: 🔒 Update your review
+      parameters:
+        - { $ref: "#/components/parameters/idParam" }
+      responses:
+        "200":
+          description: Review updated
+    delete:
+      tags: [Reviews]
+      summary: 🔒 Delete your review (or admin)
+      parameters:
+        - { $ref: "#/components/parameters/idParam" }
+      responses:
+        "200":
+          description: Review deleted
+
+  /reviews/{id}/like:
+    post:
+      tags: [Reviews]
+      summary: 🔒 Toggle like on a review
+      parameters:
+        - { $ref: "#/components/parameters/idParam" }
+      responses:
+        "200":
+          description: Like toggled
+          content:
+            application/json:
+              example:
+                success: true
+                data: { liked: true, likeCount: 13 }
+
+  # ── Coupons ───────────────────────────────────────────────────────────────────
+  /coupons/validate:
+    post:
+      tags: [Coupons]
+      summary: 🔒 Validate a coupon code for a given order total
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, orderTotal]
+              properties:
+                code:       { type: string, example: "SUMMER20" }
+                orderTotal: { type: number, example: 99.99 }
+      responses:
+        "200":
+          description: Validation result (always 200 — check valid field)
+          content:
+            application/json:
+              examples:
+                valid:
+                  value: { success: true, data: { valid: true, discountAmount: 19.99, coupon: { code: "SUMMER20", type: "percentage", discount: 20 } } }
+                invalid:
+                  value: { success: true, data: { valid: false, reason: "This coupon has expired." } }
+
+  /coupons:
+    get:
+      tags: [Coupons]
+      summary: 🔒 Admin — list all coupons
+      parameters:
+        - { $ref: "#/components/parameters/pageParam" }
+        - in: query
+          name: isActive
+          schema: { type: boolean }
+      responses:
+        "200":
+          description: Coupon list
+    post:
+      tags: [Coupons]
+      summary: 🔒 Admin — create a coupon
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Coupon" }
+      responses:
+        "201":
+          description: Coupon created
+
+  /coupons/stats:
+    get:
+      tags: [Coupons]
+      summary: 🔒 Admin — coupon usage statistics
+      responses:
+        "200":
+          description: Coupon stats
+
+  /coupons/{id}:
+    get:
+      tags: [Coupons]
+      summary: 🔒 Admin — get coupon by ID
+      parameters:
+        - { $ref: "#/components/parameters/idParam" }
+      responses:
+        "200":
+          description: Coupon details
+    patch:
+      tags: [Coupons]
+      summary: 🔒 Admin — update a coupon
+      parameters:
+        - { $ref: "#/components/parameters/idParam" }
+      responses:
+        "200":
+          description: Coupon updated
+    delete:
+      tags: [Coupons]
+      summary: 🔒 Admin — delete a coupon
+      parameters:
+        - { $ref: "#/components/parameters/idParam" }
+      responses:
+        "200":
+          description: Coupon deleted
+
+  # ── Payments ──────────────────────────────────────────────────────────────────
+  /payments/create-intent:
+    post:
+      tags: [Payments]
+      summary: 🔒 Create a Stripe PaymentIntent for an order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [orderId]
+              properties:
+                orderId: { type: string }
+      responses:
+        "200":
+          description: PaymentIntent created
+          content:
+            application/json:
+              example:
+                success: true
+                data: { clientSecret: "pi_xxx_secret_yyy", orderId: "64abc..." }
+        "400":
+          description: Order already paid or cancelled
+
+  /payments/webhook:
+    post:
+      tags: [Payments]
+      summary: Stripe webhook endpoint (raw body required)
+      security: []
+      description: |
+        Called by Stripe for events: `payment_intent.succeeded`,
+        `payment_intent.payment_failed`, `charge.refunded`.
+        Requires Stripe-Signature header.
+      responses:
+        "200":
+          description: Webhook received (always 200 to prevent Stripe retries)
+        "400":
+          description: Invalid Stripe signature
+
+  /payments/refund/{orderId}:
+    post:
+      tags: [Payments]
+      summary: 🔒 Admin — issue a refund for an order
+      parameters:
+        - in: path
+          name: orderId
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount: { type: number, description: "Partial refund amount. Omit for full refund." }
+                reason: { type: string }
+      responses:
+        "200":
+          description: Refund issued
+
+  # ── Wishlist ──────────────────────────────────────────────────────────────────
+  /wishlist:
+    get:
+      tags: [Wishlist]
+      summary: 🔒 Get current user's wishlist
+      responses:
+        "200":
+          description: Wishlist with product details
+    post:
+      tags: [Wishlist]
+      summary: 🔒 Add a product to wishlist
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [productId]
+              properties:
+                productId: { type: string }
+      responses:
+        "200":
+          description: Product added to wishlist
+        "400":
+          description: Wishlist full (max 100 items)
+
+  /wishlist/{productId}:
+    delete:
+      tags: [Wishlist]
+      summary: 🔒 Remove a product from wishlist
+      parameters:
+        - in: path
+          name: productId
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Product removed
+
+  /wishlist/{productId}/move-to-cart:
+    post:
+      tags: [Wishlist]
+      summary: 🔒 Move a wishlist item to cart
+      parameters:
+        - in: path
+          name: productId
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Product moved to cart
+        "400":
+          description: Product out of stock
+
+  # ── Analytics ─────────────────────────────────────────────────────────────────
+  /analytics/dashboard:
+    get:
+      tags: [Analytics]
+      summary: 🔒 Admin — KPI summary dashboard
+      responses:
+        "200":
+          description: Dashboard stats (cached 5 min)
+          content:
+            application/json:
+              example:
+                success: true
+                data:
+                  stats:
+                    totalRevenue: 125430.50
+                    revenueToday: 2340.00
+                    revenueThisMonth: 18750.00
+                    totalOrders: 1284
+                    ordersToday: 23
+                    totalUsers: 5420
+                    newUsersToday: 14
+                    lowStockCount: 3
+
+  /analytics/revenue:
+    get:
+      tags: [Analytics]
+      summary: 🔒 Admin — revenue chart data
+      parameters:
+        - in: query
+          name: period
+          schema: { type: string, enum: [daily, weekly, monthly], default: daily }
+        - in: query
+          name: from
+          schema: { type: string, format: date, example: "2024-01-01" }
+        - in: query
+          name: to
+          schema: { type: string, format: date, example: "2024-01-31" }
+      responses:
+        "200":
+          description: Revenue data points grouped by period
+
+  /analytics/top-products:
+    get:
+      tags: [Analytics]
+      summary: 🔒 Admin — top-selling products
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 50, default: 10 }
+      responses:
+        "200":
+          description: Top products by units sold
+
+  /analytics/top-categories:
+    get:
+      tags: [Analytics]
+      summary: 🔒 Admin — top categories by revenue
+      responses:
+        "200":
+          description: Top 10 categories by revenue
+
+  /analytics/user-growth:
+    get:
+      tags: [Analytics]
+      summary: 🔒 Admin — user registration and activity statistics
+      responses:
+        "200":
+          description: User growth stats

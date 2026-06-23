@@ -1,0 +1,2 @@
+# Place data factory files here for reuse across seed.js and tests
+# e.g. userFactory.js, productFactory.js
