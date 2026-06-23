@@ -28,10 +28,15 @@ const DEV_ORIGINS = [
   "http://localhost:5174",
 ];
 
-const allowedOrigins =
-  process.env.NODE_ENV === "production"
-    ? PROD_ORIGINS
-    : [...PROD_ORIGINS, ...DEV_ORIGINS];
+// const allowedOrigins =
+//   process.env.NODE_ENV === "production"
+//     ? PROD_ORIGINS
+//     : [...PROD_ORIGINS, ...DEV_ORIGINS];
+
+const allowedOrigins = [
+  ...DEV_ORIGINS,
+  ...PROD_ORIGINS,
+];
 
 // ── Origin validator ──────────────────────────────────────────────────────────
 
