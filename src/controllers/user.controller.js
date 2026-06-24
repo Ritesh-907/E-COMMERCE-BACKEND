@@ -185,7 +185,30 @@ exports.setDefaultAddress = asyncHandler(async (req, res) => {
   await user.save({ validateBeforeSave: false });
   successResponse(res, { addresses: user.addresses }, 'Default address updated.');
 });
+// GET /api/v1/users/me/notifications?page=1&limit=20
+exports.getMyNotifications = asyncHandler(async (req, res) => {
+  const page  = parseInt(req.query.page)  || 1;
+  const limit = parseInt(req.query.limit) || 20;
 
+  const notificationService = require('../services/notification.service');
+
+  const result = await notificationService.getUserNotifications(
+    req.user._id,
+    page,
+    limit
+  );
+
+  successResponse(res, result);
+});
+// ── Notification - managemnet ────────────────────────────────────────────────────────
+// PATCH /api/v1/users/me/notifications/read-all
+exports.markAllNotificationsRead = asyncHandler(async (req, res) => {
+  const notificationService = require('../services/notification.service');
+
+  const { modifiedCount } = await notificationService.markAllAsRead(req.user._id);
+
+  successResponse(res, { modifiedCount }, 'All notifications marked as read.');
+});
 // ── Admin: getAllUsers ────────────────────────────────────────────────────────
 
 exports.getAllUsers = asyncHandler(async (req, res) => {

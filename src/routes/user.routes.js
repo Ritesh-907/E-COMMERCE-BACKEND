@@ -74,7 +74,11 @@ router.patch(
   '/me/addresses/:addressId/default',
   userController.setDefaultAddress
 );
+// GET /api/v1/users/me/notifications
+router.get('/me/notifications', userController.getMyNotifications);
 
+// PATCH /api/v1/users/me/notifications/read-all
+router.patch('/me/notifications/read-all', userController.markAllNotificationsRead);
 // ── Admin: user management ────────────────────────────────────────────────────
 // All routes below require admin role (applied per-route for clarity)
 
