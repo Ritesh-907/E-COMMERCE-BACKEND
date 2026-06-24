@@ -23,7 +23,7 @@ const logger = require('../src/utils/logger');
 const APPLY = process.argv.includes('--apply');
 
 async function run() {
-  const uri = process.env.MONGO_URI
+  const uri = process.env.MONGO_URI || "mongodb+srv://ritesh_07:7cX4wKRTGeRIt4Re@aspirelite.fzlcxrr.mongodb.net/ecommerce"
 
   if (!uri) {
     logger.error('MONGO_URI is not defined in environment variables');
